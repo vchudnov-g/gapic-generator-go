@@ -78,6 +78,7 @@ func (g *generator) genDocFile(pkgPath, pkgName string, year int, scopes []strin
 
 	p("import (")
 	p("%s%q", "\t", "context")
+	p("%s%q", "\t", "os/exec")
 	p("%s%q", "\t", "runtime")
 	p("%s%q", "\t", "strings")
 	p("%s%q", "\t", "unicode")
@@ -115,6 +116,16 @@ func (g *generator) genDocFile(pkgPath, pkgName string, year int, scopes []strin
 		p("%q,", sc)
 	}
 	p("  }")
+	p("}")
+
+	p("")
+	p("func getHTTPAccessToken() (string, error) {")
+	p("  // TODO(vchudnov): Find another way to do this without shelling to `gcloud`")
+	p(`  parts := strings.Split("gcloud auth application-default print-access-token", " ")`)
+	p("  cmd := exec.Command(parts[0], parts[1:]...)")
+	p("  cmd.Env = nil")
+	p("  token, err := cmd.Output()")
+	p("  return strings.TrimSpace(string(token)), err")
 	p("}")
 
 	// versionGo

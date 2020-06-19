@@ -171,6 +171,24 @@ func strContains(a []string, s string) bool {
 	return false
 }
 
+type clientGenerator interface {
+	clientHook(servName string)
+	clientOptions(serv *descriptor.ServiceDescriptorProto, servName string) error
+	clientInit(serv *descriptor.ServiceDescriptorProto, servName string) error
+
+	// TODO(vchudnov). Remove; this is temporary. This should be
+	// part of generator, not clientGenerator. Using it here while
+	// we migrate the functions alled by generator.genMethod over
+	// to clientGenerator.
+	genMethod(servName string, serv *descriptor.ServiceDescriptorProto, m *descriptor.MethodDescriptorProto) error
+}
+
+// generator performs two purposes: it is the generator that
+// accumulates all the generated Go code, and it also implements
+// clientGenerator for the gRPC-transport case.
+//
+// TODO(vchudnov): Factor out the clientGenerator-implementing parts
+// into a separate struct+methods, grpcClientGenerator.
 type generator struct {
 	pt printer.P
 
@@ -310,55 +328,61 @@ func (g *generator) reset() {
 
 // gen generates client for the given service.
 func (g *generator) gen(serv *descriptor.ServiceDescriptorProto, pkgName string) error {
+	httpClientGenerator := &httpClientGenerator{g}
+	grpcClientGenerator := g // TODO(vchudnov) factor this out into a separate struct
+	clientTypes := []clientGenerator{grpcClientGenerator, httpClientGenerator}
+
 	servName := pbinfo.ReduceServName(*serv.Name, pkgName)
 
-	g.clientHook(servName)
-	if err := g.clientOptions(serv, servName); err != nil {
-		return err
-	}
-	if err := g.clientInit(serv, servName); err != nil {
-		return err
-	}
-
-	// clear LRO types between services
-	g.aux.lros = []*descriptor.MethodDescriptorProto{}
-
-	for _, m := range serv.Method {
-		g.methodDoc(m)
-		if err := g.genMethod(servName, serv, m); err != nil {
-			return errors.E(err, "method: %s", m.GetName())
-		}
-	}
-
-	sort.Slice(g.aux.lros, func(i, j int) bool {
-		return g.aux.lros[i].GetName() < g.aux.lros[j].GetName()
-	})
-	for _, m := range g.aux.lros {
-		if err := g.lroType(servName, serv, m); err != nil {
+	for _, cg := range clientTypes {
+		cg.clientHook(servName)
+		if err := cg.clientOptions(serv, servName); err != nil {
 			return err
 		}
-	}
 
-	var iters []*iterType
-	for _, iter := range g.aux.iters {
-		// skip iterators that have already been generated in this package
-		//
-		// TODO(ndietz): investigate generating auxiliary types in a
-		// separate file in the same package to avoid keeping this state
-		if iter.generated {
-			continue
+		if err := cg.clientInit(serv, servName); err != nil {
+			return err
 		}
 
-		iter.generated = true
-		iters = append(iters, iter)
-	}
-	sort.Slice(iters, func(i, j int) bool {
-		return iters[i].iterTypeName < iters[j].iterTypeName
-	})
-	for _, iter := range iters {
-		g.pagingIter(iter)
-	}
+		// clear LRO types between services
+		g.aux.lros = []*descriptor.MethodDescriptorProto{}
 
+		for _, m := range serv.Method {
+			g.methodDoc(m)
+			if err := cg.genMethod(servName, serv, m); err != nil {
+				return errors.E(err, "method: %s", m.GetName())
+			}
+		}
+
+		sort.Slice(g.aux.lros, func(i, j int) bool {
+			return g.aux.lros[i].GetName() < g.aux.lros[j].GetName()
+		})
+		for _, m := range g.aux.lros {
+			if err := g.lroType(servName, serv, m); err != nil {
+				return err
+			}
+		}
+
+		var iters []*iterType
+		for _, iter := range g.aux.iters {
+			// skip iterators that have already been generated in this package
+			//
+			// TODO(ndietz): investigate generating auxiliary types in a
+			// separate file in the same package to avoid keeping this state
+			if iter.generated {
+				continue
+			}
+
+			iter.generated = true
+			iters = append(iters, iter)
+		}
+		sort.Slice(iters, func(i, j int) bool {
+			return iters[i].iterTypeName < iters[j].iterTypeName
+		})
+		for _, iter := range iters {
+			g.pagingIter(iter)
+		}
+	}
 	return nil
 }
 
