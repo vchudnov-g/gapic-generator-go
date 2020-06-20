@@ -172,15 +172,15 @@ func strContains(a []string, s string) bool {
 }
 
 type clientGenerator interface {
-	clientHook(servName string)
-	clientOptions(serv *descriptor.ServiceDescriptorProto, servName string) error
 	clientInit(serv *descriptor.ServiceDescriptorProto, servName string) error
 
-	// TODO(vchudnov). Remove; this is temporary. This should be
-	// part of generator, not clientGenerator. Using it here while
-	// we migrate the functions alled by generator.genMethod over
-	// to clientGenerator.
-	genMethod(servName string, serv *descriptor.ServiceDescriptorProto, m *descriptor.MethodDescriptorProto) error
+	insertMetadata(m *descriptor.MethodDescriptorProto) error
+
+	// must return a code fragment that sets the response message
+	// `resp` and an error `err`
+	clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error)
+
+	clientType() string
 }
 
 // generator performs two purposes: it is the generator that
@@ -216,6 +216,12 @@ type generator struct {
 	// Release level that defaults to GA/nothing
 	relLvl string
 }
+
+func (g *generator) clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error) {
+	return fmt.Sprintf("resp, err = %s  //vchudnov-gRPC!", grpcClientCall(servName, *m.Name)), nil
+}
+
+func (g *generator) clientType() string { return "" }
 
 func (g *generator) init(files []*descriptor.FileDescriptorProto) {
 	g.descInfo = pbinfo.Of(files)
@@ -332,11 +338,12 @@ func (g *generator) gen(serv *descriptor.ServiceDescriptorProto, pkgName string)
 	grpcClientGenerator := g // TODO(vchudnov) factor this out into a separate struct
 	clientTypes := []clientGenerator{grpcClientGenerator, httpClientGenerator}
 
-	servName := pbinfo.ReduceServName(*serv.Name, pkgName)
+	servNameRoot := pbinfo.ReduceServName(*serv.Name, pkgName)
 
 	for _, cg := range clientTypes {
-		cg.clientHook(servName)
-		if err := cg.clientOptions(serv, servName); err != nil {
+		servName := servNameRoot + cg.clientType()
+		g.clientHook(servName)
+		if err := g.clientOptions(serv, servName); err != nil {
 			return err
 		}
 
@@ -349,7 +356,7 @@ func (g *generator) gen(serv *descriptor.ServiceDescriptorProto, pkgName string)
 
 		for _, m := range serv.Method {
 			g.methodDoc(m)
-			if err := cg.genMethod(servName, serv, m); err != nil {
+			if err := g.genMethod(cg, servName, serv, m); err != nil {
 				return errors.E(err, "method: %s", m.GetName())
 			}
 		}
@@ -399,7 +406,7 @@ type auxTypes struct {
 
 // genMethod generates a single method from a client. m must be a method declared in serv.
 // If the generated method requires an auxillary type, it is added to aux.
-func (g *generator) genMethod(servName string, serv *descriptor.ServiceDescriptorProto, m *descriptor.MethodDescriptorProto) error {
+func (g *generator) genMethod(cg clientGenerator, servName string, serv *descriptor.ServiceDescriptorProto, m *descriptor.MethodDescriptorProto) error {
 	if g.isLRO(m) {
 		g.aux.lros = append(g.aux.lros, m)
 		return g.lroCall(servName, m)
@@ -416,7 +423,6 @@ func (g *generator) genMethod(servName string, serv *descriptor.ServiceDescripto
 		if err != nil {
 			return err
 		}
-
 		return g.pagingCall(servName, m, pf, iter)
 	}
 
@@ -426,11 +432,11 @@ func (g *generator) genMethod(servName string, serv *descriptor.ServiceDescripto
 	case m.GetServerStreaming():
 		return g.serverStreamCall(servName, serv, m)
 	default:
-		return g.unaryCall(servName, m)
+		return g.unaryCall(cg, servName, m)
 	}
 }
 
-func (g *generator) unaryCall(servName string, m *descriptor.MethodDescriptorProto) error {
+func (g *generator) unaryCall(cg clientGenerator, servName string, m *descriptor.MethodDescriptorProto) error {
 	inType := g.descInfo.Type[*m.InputType]
 	outType := g.descInfo.Type[*m.OutputType]
 
@@ -448,7 +454,12 @@ func (g *generator) unaryCall(servName string, m *descriptor.MethodDescriptorPro
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (*%s.%s, error) {",
 		servName, *m.Name, inSpec.Name, inType.GetName(), outSpec.Name, outType.GetName())
 
-	err = g.insertMetadata(m)
+	err = cg.insertMetadata(m)
+	if err != nil {
+		return err
+	}
+
+	clientCall, err := cg.clientCall(servName, m)
 	if err != nil {
 		return err
 	}
@@ -457,7 +468,7 @@ func (g *generator) unaryCall(servName string, m *descriptor.MethodDescriptorPro
 	p("var resp *%s.%s", outSpec.Name, outType.GetName())
 	p("err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {")
 	p("  var err error")
-	p("  resp, err = %s", grpcClientCall(servName, *m.Name))
+	p("  %s", clientCall)
 	p("  return err")
 	p("}, opts...)")
 	p("if err != nil {")

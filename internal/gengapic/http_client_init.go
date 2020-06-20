@@ -18,188 +18,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/protoc-gen-go/descriptor"
-	conf "github.com/googleapis/gapic-generator-go/internal/grpc_service_config"
 	"github.com/googleapis/gapic-generator-go/internal/pbinfo"
-	"google.golang.org/genproto/googleapis/api/annotations"
-	"google.golang.org/genproto/googleapis/rpc/code"
 )
 
 // httpClientGenerator implements clientGenerator for the HTTP-transport case
 type httpClientGenerator struct {
 	g *generator
-}
-
-func (hcg *httpClientGenerator) clientHook(servName string) {
-	g := hcg.g
-	p := g.printf
-
-	p("var new%sHTTPClientHook clientHook", servName)
-	p("")
-}
-
-func (hcg *httpClientGenerator) clientOptions(serv *descriptor.ServiceDescriptorProto, servName string) error {
-	g := hcg.g
-	p := g.printf
-	relyOnGrpcConfig := true
-
-	// CallOptions struct
-	if !relyOnGrpcConfig {
-		p("// %[1]sCallOptions contains the retry settings for each method of %[1]sClient.", servName)
-		p("type %sCallOptions struct {", servName)
-		for _, m := range serv.Method {
-			p("%s []gax.CallOption", *m.Name)
-		}
-		p("}")
-		p("")
-
-		g.imports[pbinfo.ImportSpec{"gax", "github.com/googleapis/gax-go/v2"}] = true
-	}
-
-	// defaultHTTPClientOptions
-	{
-		var host string
-		if eHost, err := proto.GetExtension(serv.Options, annotations.E_DefaultHost); err == nil {
-			host = *eHost.(*string)
-		} else {
-			fqn := g.descInfo.ParentFile[serv].GetPackage() + "." + serv.GetName()
-			return fmt.Errorf("service %q is missing option google.api.default_host", fqn)
-		}
-
-		if !strings.Contains(host, ":") {
-			host += ":443"
-		}
-
-		p("func default%sHTTPClientOptions() []option.ClientOption {", servName)
-		p("  // TODO(vchudnov): Generate options for HTTP transport")
-		p("  return []option.ClientOption{")
-		p("    option.WithEndpoint(%q),", host)
-		p("    option.WithGRPCDialOption(grpc.WithDisableServiceConfig()),")
-		p("    option.WithScopes(DefaultAuthScopes()...),")
-		p("    option.WithGRPCDialOption(grpc.WithDefaultCallOptions(")
-		p("      grpc.MaxCallRecvMsgSize(math.MaxInt32))),")
-		p("  }")
-		p("}")
-		p("")
-
-		g.imports[pbinfo.ImportSpec{Path: "math"}] = true
-		g.imports[pbinfo.ImportSpec{Path: "google.golang.org/api/option"}] = true
-	}
-
-	// defaultCallOptions
-	if !relyOnGrpcConfig {
-		sFQN := fmt.Sprintf("%s.%s", g.descInfo.ParentFile[serv].GetPackage(), serv.GetName())
-		policies := map[string]*conf.MethodConfig_RetryPolicy{}
-		reqLimits := map[string]int{}
-		resLimits := map[string]int{}
-
-		var methCfgs []*conf.MethodConfig
-		if g.grpcConf != nil {
-			methCfgs = g.grpcConf.GetMethodConfig()
-		}
-
-		// gather retry policies from MethodConfigs
-		for _, mc := range methCfgs {
-			for _, name := range mc.GetName() {
-				base := name.GetService()
-
-				// skip the Name entry if it's not the current service
-				if base != sFQN {
-					continue
-				}
-
-				// individual method config, overwrites service-level config
-				if name.GetMethod() != "" {
-					base = base + "." + name.GetMethod()
-					policies[base] = mc.GetRetryPolicy()
-
-					if maxReq := mc.GetMaxRequestMessageBytes(); maxReq != nil {
-						reqLimits[base] = int(maxReq.GetValue())
-					}
-
-					if maxRes := mc.GetMaxResponseMessageBytes(); maxRes != nil {
-						resLimits[base] = int(maxRes.GetValue())
-					}
-
-					continue
-				}
-
-				// service-level config, apply to all *unset* methods
-				for _, m := range serv.GetMethod() {
-					// build fully-qualified name
-					fqn := base + "." + m.GetName()
-
-					// set retry config
-					if _, ok := policies[fqn]; !ok {
-						policies[fqn] = mc.GetRetryPolicy()
-					}
-
-					// set max request size limit
-					if maxReq := mc.GetMaxRequestMessageBytes(); maxReq != nil {
-						if _, ok := reqLimits[fqn]; !ok {
-							reqLimits[fqn] = int(maxReq.GetValue())
-						}
-					}
-
-					// set max response size limit
-					if maxRes := mc.GetMaxResponseMessageBytes(); maxRes != nil {
-						if _, ok := resLimits[fqn]; !ok {
-							resLimits[fqn] = int(maxRes.GetValue())
-						}
-					}
-				}
-			}
-		}
-
-		// read retry params from gRPC ServiceConfig
-		p("func default%[1]sCallOptions() *%[1]sCallOptions {", servName)
-		p("  return &%sCallOptions{", servName)
-		for _, m := range serv.GetMethod() {
-			mFQN := sFQN + "." + m.GetName()
-			p("%s: []gax.CallOption{", m.GetName())
-
-			if maxReq, ok := reqLimits[mFQN]; ok {
-				p("gax.WithGRPCOptions(grpc.MaxCallSendMsgSize(%d)),", maxReq)
-			}
-
-			if maxRes, ok := resLimits[mFQN]; ok {
-				p("gax.WithGRPCOptions(grpc.MaxCallRecvMsgSize(%d)),", maxRes)
-			}
-
-			if rp, ok := policies[mFQN]; ok && rp != nil {
-				p("gax.WithRetry(func() gax.Retryer {")
-				p("  return gax.OnCodes([]codes.Code{")
-				for _, c := range rp.GetRetryableStatusCodes() {
-					cstr := c.String()
-
-					// Go uses the American-English spelling with a single "L"
-					if c == code.Code_CANCELLED {
-						cstr = "Canceled"
-					}
-
-					p("    codes.%s,", snakeToCamel(cstr))
-				}
-				p("	 }, gax.Backoff{")
-				// this ignores max_attempts
-				p("		Initial:    %d * time.Millisecond,", durationToMillis(rp.GetInitialBackoff()))
-				p("		Max:        %d * time.Millisecond,", durationToMillis(rp.GetMaxBackoff()))
-				p("		Multiplier: %.2f,", rp.GetBackoffMultiplier())
-				p("	 })")
-				p("}),")
-
-				// include imports necessary for retry configuration
-				g.imports[pbinfo.ImportSpec{Path: "time"}] = true
-				g.imports[pbinfo.ImportSpec{Path: "google.golang.org/grpc/codes"}] = true
-			}
-			p("},")
-		}
-		p("  }")
-		p("}")
-		p("")
-	}
-
-	return nil
 }
 
 func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorProto, servName string) error {
@@ -224,7 +49,7 @@ func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorPro
 		p("// %sHTTPClient is a client for interacting with %s.", servName, g.apiName)
 		p("//")
 		p("// Methods, except Close, may be called concurrently. However, fields must not be modified concurrently with method calls.")
-		p("type %sHTTPClient struct {", servName)
+		p("type %sClient struct {", servName)
 
 		// p("// Connection pool of gRPC connections to the service.")
 		// p("connPool gtransport.ConnPool")
@@ -266,18 +91,18 @@ func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorPro
 		p("// New%sClient creates a new %s client.", servName, clientName)
 		p("//")
 		g.comment(g.comments[serv])
-		p("func New%[1]sHTTPClient(ctx context.Context, opts ...option.ClientOption) (*%[1]sHTTPClient, error) {", servName)
-		p("  clientOpts := default%sHTTPClientOptions()", servName)
+		p("func New%[1]sClient(ctx context.Context, opts ...option.ClientOption) (*%[1]sClient, error) {", servName)
+		p("  clientOpts := default%sClientOptions()", servName)
 		p("")
 		p("  if new%sClientHook != nil {", servName)
-		p("    hookOpts, err := new%sHTTPClientHook(ctx, clientHookParams{})", servName)
+		p("    hookOpts, err := new%sClientHook(ctx, clientHookParams{})", servName)
 		p("    if err != nil {")
 		p("      return nil, err")
 		p("    }")
 		p("    clientOpts = append(clientOpts, hookOpts...)")
 		p("  }")
 		p("")
-		p("  c := &%sHTTPClient{", servName)
+		p("  c := &%sClient{", servName)
 		p("    CallOptions: default%sCallOptions(),", servName)
 		p("")
 		p("  }")
@@ -320,7 +145,7 @@ func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorPro
 		p("// setGoogleClientInfo sets the name and version of the application in")
 		p("// the `x-goog-api-client` header passed on each request. Intended for")
 		p("// use by Google-written clients.")
-		p("func (c *%sHTTPClient) setGoogleClientInfo(keyval ...string) {", servName)
+		p("func (c *%sClient) setGoogleClientInfo(keyval ...string) {", servName)
 		p(`  kv := append([]string{"gl-go", versionGo()}, keyval...)`)
 		p(`  kv = append(kv, "gapic", versionClient, "gax", gax.Version, "grpc", grpc.Version)`)
 		p(`  c.xGoogMetadata = metadata.Pairs("x-goog-api-client", gax.XGoogHeader(kv...))`)
@@ -331,15 +156,20 @@ func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorPro
 	return nil
 }
 
-// TODO(vchudnov). Remove; this is temporary. This should be
-// part of generator, not clientGenerator. Using it here while
-// we migrate the functions alled by generator.genMethod over
-// to clientGenerator.
-func (hcg *httpClientGenerator) genMethod(servName string, serv *descriptor.ServiceDescriptorProto, m *descriptor.MethodDescriptorProto) error {
+func (hcg *httpClientGenerator) insertMetadata(m *descriptor.MethodDescriptorProto) error {
+	// TODO(vchudnov) Stub for now
 	g := hcg.g
 	p := g.printf
-	p("// HTTP method %q goes here", *m.Name)
 	p("")
+	p("// TODO(vchudnov): Some metadata goes here")
 	p("")
 	return nil
+}
+
+func (hcg *httpClientGenerator) clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error) {
+	return fmt.Sprintf("// TODO(vchudnov-HTTP) resp, err = something"), nil
+}
+
+func (hcg *httpClientGenerator) clientType() string {
+	return "HTTP"
 }
