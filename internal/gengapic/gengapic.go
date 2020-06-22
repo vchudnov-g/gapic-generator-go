@@ -451,8 +451,9 @@ func (g *generator) unaryCall(cg clientGenerator, servName string, m *descriptor
 
 	p := g.printf
 
-	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (*%s.%s, error) { // method-type: unary",
+	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (*%s.%s, error) {",
 		servName, *m.Name, inSpec.Name, inType.GetName(), outSpec.Name, outType.GetName())
+	p(" // method-type: unary")
 
 	err = cg.insertMetadata(m)
 	if err != nil {
@@ -495,8 +496,9 @@ func (g *generator) emptyUnaryCall(servName string, m *descriptor.MethodDescript
 
 	p := g.printf
 
-	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) error { // method-type: emptyUnary",
+	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) error {",
 		servName, m.GetName(), inSpec.Name, inType.GetName())
+	p(" // method-type: emptyUnary")
 
 	err = g.insertMetadata(m)
 	if err != nil {

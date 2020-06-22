@@ -161,7 +161,7 @@ func (hcg *httpClientGenerator) insertMetadata(m *descriptor.MethodDescriptorPro
 	g := hcg.g
 	p := g.printf
 	p("")
-	p("// TODO(vchudnov): Some metadata goes here")
+	p("  // TODO(vchudnov): Some metadata goes here")
 	p("")
 	return nil
 }
