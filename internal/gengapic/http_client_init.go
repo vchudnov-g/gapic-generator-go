@@ -20,6 +20,7 @@ import (
 
 	"github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"github.com/googleapis/gapic-generator-go/internal/pbinfo"
+	"github.com/googleapis/gapic-generator-go/internal/printer"
 )
 
 // httpClientGenerator implements clientGenerator for the HTTP-transport case
@@ -166,8 +167,23 @@ func (hcg *httpClientGenerator) insertMetadata(m *descriptor.MethodDescriptorPro
 	return nil
 }
 
-func (hcg *httpClientGenerator) clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error) {
-	return fmt.Sprintf("// TODO(vchudnov-HTTP) resp, err = something"), nil
+func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("generating call code for %q", *m.Name)
+		}
+	}()
+
+	err = restifyRequest(pt, m)
+	if er != nil {
+		return err
+	}
+
+	// TODO(vchudnov) NEXT: generate HTTP request
+	// TODO(vchudnov) add auth
+	// TODO(vchudnov) parse response body
+
+	return nil
 }
 
 func (hcg *httpClientGenerator) clientType() string {

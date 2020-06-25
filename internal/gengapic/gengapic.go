@@ -37,7 +37,6 @@ import (
 	"github.com/googleapis/gapic-generator-go/internal/license"
 	"github.com/googleapis/gapic-generator-go/internal/pbinfo"
 	"github.com/googleapis/gapic-generator-go/internal/printer"
-	"google.golang.org/genproto/googleapis/api/annotations"
 )
 
 const (
@@ -178,7 +177,7 @@ type clientGenerator interface {
 
 	// must return a code fragment that sets the response message
 	// `resp` and an error `err`
-	clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error)
+	clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) error
 
 	clientType() string
 }
@@ -217,8 +216,9 @@ type generator struct {
 	relLvl string
 }
 
-func (g *generator) clientCall(servName string, m *descriptor.MethodDescriptorProto) (string, error) {
-	return fmt.Sprintf("resp, err = %s  //vchudnov-gRPC!", grpcClientCall(servName, *m.Name)), nil
+func (g *generator) clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) error {
+	pt.Printf("resp, err = %s  //vchudnov-gRPC!", grpcClientCall(servName, *m.Name))
+	return nil
 }
 
 func (g *generator) clientType() string { return "" }
@@ -460,16 +460,14 @@ func (g *generator) unaryCall(cg clientGenerator, servName string, m *descriptor
 		return err
 	}
 
-	clientCall, err := cg.clientCall(servName, m)
-	if err != nil {
-		return err
-	}
-
 	g.appendCallOpts(m)
 	p("var resp *%s.%s", outSpec.Name, outType.GetName())
 	p("err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {")
 	p("  var err error")
-	p("  %s", clientCall)
+	err = cg.clientCall(&g.pt, servName, m)
+	if err != nil {
+		return err
+	}
 	p("  return err")
 	p("}, opts...)")
 	p("if err != nil {")
@@ -677,33 +675,12 @@ func snakeToCamel(s string) string {
 func parseRequestHeaders(m *descriptor.MethodDescriptorProto) ([][]string, error) {
 	var matches [][]string
 
-	eHTTP, err := proto.GetExtension(m.GetOptions(), annotations.E_Http)
-	if m == nil || m.GetOptions() == nil || err == proto.ErrMissingExtension {
-		return nil, nil
-	} else if err != nil {
+	allPatterns, err := getHTTPAnnotation(m)
+	if err != nil || len(allPatterns) == 0 {
 		return nil, err
 	}
 
-	http := eHTTP.(*annotations.HttpRule)
-	rules := []*annotations.HttpRule{http}
-	rules = append(rules, http.GetAdditionalBindings()...)
-
-	for _, rule := range rules {
-		pattern := ""
-
-		switch rule.GetPattern().(type) {
-		case *annotations.HttpRule_Get:
-			pattern = rule.GetGet()
-		case *annotations.HttpRule_Post:
-			pattern = rule.GetPost()
-		case *annotations.HttpRule_Patch:
-			pattern = rule.GetPatch()
-		case *annotations.HttpRule_Put:
-			pattern = rule.GetPut()
-		case *annotations.HttpRule_Delete:
-			pattern = rule.GetDelete()
-		}
-
+	for _, pattern := range allPatterns {
 		matches = append(matches, headerParamRegexp.FindAllStringSubmatch(pattern, -1)...)
 	}
 
