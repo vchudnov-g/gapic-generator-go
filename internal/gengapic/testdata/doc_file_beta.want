@@ -36,6 +36,7 @@ package awesome // import "path/to/awesome"
 
 import (
 	"context"
+	"os/exec"
 	"runtime"
 	"strings"
 	"unicode"
@@ -68,6 +69,15 @@ func DefaultAuthScopes() []string {
 		"https://foo.bar.com/auth",
 		"https://zip.zap.com/auth",
 	}
+}
+
+func getHTTPAccessToken() (string, error) {
+	// TODO(vchudnov): Find another way to do this without shelling to `gcloud`
+	parts := strings.Split("gcloud auth application-default print-access-token", " ")
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Env = nil
+	token, err := cmd.Output()
+	return strings.TrimSpace(string(token)), err
 }
 
 // versionGo returns the Go runtime version. The returned string

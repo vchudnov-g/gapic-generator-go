@@ -284,7 +284,7 @@ methods:
 		g.aux = &auxTypes{
 			iters: map[string]*iterType{},
 		}
-		if err := g.genMethod("Foo", serv, m); err != nil {
+		if err := g.genMethod(&g, "Foo", serv, m); err != nil {
 			t.Error(err)
 			continue
 		}
@@ -365,7 +365,7 @@ lros:
 
 		g.aux = &auxTypes{}
 
-		if err := g.genMethod("Foo", serv, m); err != nil {
+		if err := g.genMethod(&g, "Foo", serv, m); err != nil {
 			t.Error(err)
 			continue
 		}

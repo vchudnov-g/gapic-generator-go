@@ -217,7 +217,7 @@ type generator struct {
 }
 
 func (g *generator) clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) error {
-	pt.Printf("resp, err = %s  //vchudnov-gRPC!", grpcClientCall(servName, *m.Name))
+	pt.Printf("resp, err = %s", grpcClientCall(servName, *m.Name))
 	return nil
 }
 
@@ -453,7 +453,7 @@ func (g *generator) unaryCall(cg clientGenerator, servName string, m *descriptor
 
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (*%s.%s, error) {",
 		servName, *m.Name, inSpec.Name, inType.GetName(), outSpec.Name, outType.GetName())
-	p(" // method-type: unary")
+	//	p(" // method-type: unary")
 
 	err = cg.insertMetadata(m)
 	if err != nil {
@@ -496,7 +496,7 @@ func (g *generator) emptyUnaryCall(servName string, m *descriptor.MethodDescript
 
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) error {",
 		servName, m.GetName(), inSpec.Name, inType.GetName())
-	p(" // method-type: emptyUnary")
+	//	p(" // method-type: emptyUnary")
 
 	err = g.insertMetadata(m)
 	if err != nil {

@@ -28,7 +28,7 @@ func (g *generator) noRequestStreamCall(servName string, s *descriptor.ServiceDe
 
 	p("func (c *%sClient) %s(ctx context.Context, opts ...gax.CallOption) (%s.%s_%sClient, error) {",
 		servName, m.GetName(), servSpec.Name, s.GetName(), m.GetName())
-	p(" // method-type: noRequestStream")
+	//	p(" // method-type: noRequestStream")
 
 	g.insertMetadata(nil)
 	g.appendCallOpts(m)
@@ -67,7 +67,7 @@ func (g *generator) serverStreamCall(servName string, s *descriptor.ServiceDescr
 
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (%s.%s_%sClient, error) {",
 		servName, m.GetName(), inSpec.Name, inType.GetName(), servSpec.Name, s.GetName(), m.GetName())
-	p(" // method-type: serverStream")
+	//	p(" // method-type: serverStream")
 
 	err = g.insertMetadata(m)
 	if err != nil {

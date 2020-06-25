@@ -43,7 +43,7 @@ func (g *generator) lroCall(servName string, m *descriptor.MethodDescriptorProto
 
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) (*%s, error) {",
 		servName, *m.Name, inSpec.Name, inType.GetName(), lroType)
-	p(" // method-type: lro")
+	//	p(" // method-type: lro")
 
 	err = g.insertMetadata(m)
 	if err != nil {

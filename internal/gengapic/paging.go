@@ -189,7 +189,7 @@ func (g *generator) pagingCall(servName string, m *descriptor.MethodDescriptorPr
 	p := g.printf
 	p("func (c *%sClient) %s(ctx context.Context, req *%s.%s, opts ...gax.CallOption) *%s {",
 		servName, *m.Name, inSpec.Name, inType.GetName(), pt.iterTypeName)
-	p(" // method-type: paging")
+	//	p(" // method-type: paging")
 
 	err = g.insertMetadata(m)
 	if err != nil {
