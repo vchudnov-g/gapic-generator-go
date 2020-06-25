@@ -25,18 +25,24 @@ import (
 	"google.golang.org/genproto/googleapis/api/annotations"
 )
 
-func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) ([]string, error) {
+func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []string, method string, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("http annotation: %s", err)
+		}
+	}()
+
 	eHTTP, err := proto.GetExtension(m.GetOptions(), annotations.E_Http)
 	if m == nil || m.GetOptions() == nil || err == proto.ErrMissingExtension {
-		return nil, nil
+		return nil, "", nil
 	} else if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	http := eHTTP.(*annotations.HttpRule)
 	rules := []*annotations.HttpRule{http}
 	rules = append(rules, http.GetAdditionalBindings()...)
-	allPatterns := []string{}
+	allPatterns = []string{}
 
 	for _, rule := range rules {
 		pattern := ""
@@ -44,23 +50,30 @@ func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) ([]string, error) {
 		switch rule.GetPattern().(type) {
 		case *annotations.HttpRule_Get:
 			pattern = rule.GetGet()
+			method = "GET"
 		case *annotations.HttpRule_Post:
 			pattern = rule.GetPost()
+			method = "POST"
 		case *annotations.HttpRule_Patch:
 			pattern = rule.GetPatch()
+			method = "PATCH"
 		case *annotations.HttpRule_Put:
 			pattern = rule.GetPut()
+			method = "PUT"
 		case *annotations.HttpRule_Delete:
 			pattern = rule.GetDelete()
+			method = "DELETE"
+		default:
+			return nil, "", fmt.Errorf("unhandled http method %#v", rule)
 		}
 		allPatterns = append(allPatterns, pattern)
 	}
-	return allPatterns, nil
+	return allPatterns, method, nil
 }
 
 var pathVariableRegexp = regexp.MustCompile("{([^}]+)}")
 
-func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (err error) {
+func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (method string, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("generating REST request code: %s", err)
@@ -69,9 +82,9 @@ func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (err err
 
 	p := pt.Printf
 
-	allPatterns, err := getHTTPAnnotation(m)
+	allPatterns, method, err := getHTTPAnnotation(m)
 	if err != nil || len(allPatterns) == 0 {
-		return err
+		return "", err
 	}
 
 	for _, onePattern := range allPatterns {
@@ -84,8 +97,7 @@ func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (err err
 	// TODO(vchudnov): restifyRequestQueryParams
 	// TODO(vchudnov): restifyRequestBody
 
-	p("_ = urlPath")
-	return err
+	return method, err
 }
 
 func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, pattern string) (err error) {

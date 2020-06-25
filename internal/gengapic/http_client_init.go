@@ -51,6 +51,7 @@ func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorPro
 		p("//")
 		p("// Methods, except Close, may be called concurrently. However, fields must not be modified concurrently with method calls.")
 		p("type %sClient struct {", servName)
+		p("  client *http.Client")
 
 		// p("// Connection pool of gRPC connections to the service.")
 		// p("connPool gtransport.ConnPool")
@@ -174,10 +175,30 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *de
 		}
 	}()
 
-	err = restifyRequest(pt, m)
-	if er != nil {
+	g := hcg.g
+	p := g.printf
+
+	method, err := restifyRequest(pt, m)
+	if err != nil {
 		return err
 	}
+
+	p("")
+	p("httpReq, err := http.NewRequestWithContext(ctx, %q, urlPath, nil)", method)
+	p("if err != nil {")
+	p(`  return fmt.Errorf("creating http request: %%s", err)`)
+	p("}")
+	p("")
+	p("httpResp, err := c.client.Do(httpReq)")
+	p("if err != nil {")
+	p(`  return fmt.Errorf("issuing http request: %%s", err)`)
+	p("}")
+	p("")
+	p("// TODO(vchudnov): Placeholders during development")
+	p("fmt.Printf(%q, httpResp)", "response: %#v")
+	p("")
+
+	g.imports[pbinfo.ImportSpec{Path: "net/http"}] = true
 
 	// TODO(vchudnov) NEXT: generate HTTP request
 	// TODO(vchudnov) add auth
