@@ -121,17 +121,14 @@ func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, patt
 		if err != nil {
 			return err
 		}
-		terminator := ""
-		if end < maxPatternIndex {
-			terminator = ","
-		}
-		parts = append(parts, fmt.Sprintf("%q, %s%s", pattern[currentIdx:start], variable, terminator))
+		parts = append(parts, fmt.Sprintf("%q", pattern[currentIdx:start]), variable)
 		currentIdx = end
 	}
 	if currentIdx < maxPatternIndex {
 		parts = append(parts, fmt.Sprintf("%q", pattern[currentIdx:]))
 	}
-	p("  urlPath := fmt.Sprintf(%s)", strings.Join(parts, " "))
+	p("  urlPath := fmt.Sprint(%s)", strings.Join(parts, ", "))
+
 	return nil
 }
 
