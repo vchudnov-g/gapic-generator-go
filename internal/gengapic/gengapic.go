@@ -26,6 +26,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"google.golang.org/genproto/googleapis/api/annotations"
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/golang/protobuf/jsonpb"
@@ -221,6 +222,17 @@ func (g *generator) clientCall(pt *printer.P, servName string, m *descriptor.Met
 	return nil
 }
 
+func (g *generator) getDefaultHost(serv *descriptor.ServiceDescriptorProto) (string, error) {
+	var host string
+	if eHost, err := proto.GetExtension(serv.Options, annotations.E_DefaultHost); err == nil {
+		host = *eHost.(*string)
+	} else {
+		fqn := g.descInfo.ParentFile[serv].GetPackage() + "." + serv.GetName()
+		return "", fmt.Errorf("service %q is missing option google.api.default_host", fqn)
+	}
+	return host, nil
+}
+
 func (g *generator) clientType() string { return "" }
 
 func (g *generator) init(files []*descriptor.FileDescriptorProto) {
@@ -334,7 +346,7 @@ func (g *generator) reset() {
 
 // gen generates client for the given service.
 func (g *generator) gen(serv *descriptor.ServiceDescriptorProto, pkgName string) error {
-	httpClientGenerator := &httpClientGenerator{g}
+	httpClientGenerator := &httpClientGenerator{g, ""}
 	grpcClientGenerator := g // TODO(vchudnov) factor this out into a separate struct
 	clientTypes := []clientGenerator{grpcClientGenerator, httpClientGenerator}
 

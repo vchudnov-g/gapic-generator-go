@@ -18,12 +18,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"github.com/golang/protobuf/ptypes/duration"
 	conf "github.com/googleapis/gapic-generator-go/internal/grpc_service_config"
 	"github.com/googleapis/gapic-generator-go/internal/pbinfo"
-	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/genproto/googleapis/rpc/code"
 )
 
@@ -52,12 +50,9 @@ func (g *generator) clientOptions(serv *descriptor.ServiceDescriptorProto, servN
 
 	// defaultClientOptions
 	{
-		var host string
-		if eHost, err := proto.GetExtension(serv.Options, annotations.E_DefaultHost); err == nil {
-			host = *eHost.(*string)
-		} else {
-			fqn := g.descInfo.ParentFile[serv].GetPackage() + "." + serv.GetName()
-			return fmt.Errorf("service %q is missing option google.api.default_host", fqn)
+		host, err := g.getDefaultHost(serv)
+		if err != nil {
+			return err
 		}
 
 		if !strings.Contains(host, ":") {

@@ -25,12 +25,19 @@ import (
 
 // httpClientGenerator implements clientGenerator for the HTTP-transport case
 type httpClientGenerator struct {
-	g *generator
+	g    *generator
+	host string
 }
 
 func (hcg *httpClientGenerator) clientInit(serv *descriptor.ServiceDescriptorProto, servName string) error {
 	g := hcg.g
 	p := g.printf
+
+	var err error
+	hcg.host, err = g.getDefaultHost(serv)
+	if err != nil {
+		return err
+	}
 
 	var hasLRO bool
 	for _, m := range serv.Method {
@@ -187,14 +194,21 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *de
 	}
 
 	p("")
-	p("httpReq, err := http.NewRequestWithContext(ctx, %q, urlPath, nil)", method)
+	p(`reqURL := fmt.Sprintf("https://%s%%s", urlPath)`, hcg.host)
+	p("httpReq, err := http.NewRequestWithContext(ctx, %q, reqURL, nil)", method)
 	p("if err != nil {")
-	p(`  return fmt.Errorf("creating http request %%q: %%s", urlPath, err)`)
+	p(`  return fmt.Errorf("creating http request %%q: %%s", reqURL, err)`)
 	p("}")
+	p("")
+	p("accessToken, err := getHTTPAccessToken()")
+	p("if err != nil {")
+	p(`  return fmt.Errorf("getting access token for http request %%q: %%s", reqURL, err)`)
+	p("}")
+	p(`httpReq.Header.Add("Authorization", "Bearer "+accessToken)`)
 	p("")
 	p("httpResp, err := c.client.Do(httpReq)")
 	p("if err != nil {")
-	p(`  return fmt.Errorf("issuing http request %%q: %%s", urlPath, err)`)
+	p(`  return fmt.Errorf("issuing http request %%q: %%s", reqURL, err)`)
 	p("}")
 	p("")
 	p("// TODO(vchudnov): Placeholders during development")
@@ -203,8 +217,6 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *de
 
 	g.imports[pbinfo.ImportSpec{Path: "net/http"}] = true
 
-	// TODO(vchudnov) NEXT: generate HTTP request
-	// TODO(vchudnov) add auth
 	// TODO(vchudnov) parse response body
 
 	return nil
