@@ -178,7 +178,7 @@ type clientGenerator interface {
 
 	// must return a code fragment that sets the response message
 	// `resp` and an error `err`
-	clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) error
+	clientCall(pt *printer.P, servName string, responseType string, m *descriptor.MethodDescriptorProto) error
 
 	clientType() string
 }
@@ -217,7 +217,7 @@ type generator struct {
 	relLvl string
 }
 
-func (g *generator) clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) error {
+func (g *generator) clientCall(pt *printer.P, servName string, responseType string, m *descriptor.MethodDescriptorProto) error {
 	pt.Printf("resp, err = %s", grpcClientCall(servName, *m.Name))
 	return nil
 }
@@ -471,12 +471,13 @@ func (g *generator) unaryCall(cg clientGenerator, servName string, m *descriptor
 	if err != nil {
 		return err
 	}
+	responseType := fmt.Sprintf("%s.%s", outSpec.Name, outType.GetName())
 
 	g.appendCallOpts(m)
-	p("var resp *%s.%s", outSpec.Name, outType.GetName())
+	p("var resp *%s", responseType)
 	p("err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {")
 	p("  var err error")
-	err = cg.clientCall(&g.pt, servName, m)
+	err = cg.clientCall(&g.pt, servName, responseType, m)
 	if err != nil {
 		return err
 	}

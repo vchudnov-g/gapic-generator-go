@@ -178,10 +178,10 @@ func (hcg *httpClientGenerator) insertMetadata(m *descriptor.MethodDescriptorPro
 	return nil
 }
 
-func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *descriptor.MethodDescriptorProto) (err error) {
+func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, responseType string, m *descriptor.MethodDescriptorProto) (err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("generating call code for %q", *m.Name)
+			err = fmt.Errorf("generating call code for %q: %s", *m.Name, err)
 		}
 	}()
 
@@ -211,13 +211,22 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, m *de
 	p(`  return fmt.Errorf("issuing http request %%q: %%s", reqURL, err)`)
 	p("}")
 	p("")
-	p("// TODO(vchudnov): Placeholders during development")
-	p("fmt.Printf(%q, httpResp)", "response: %#v")
+	p("respBody, err := ioutil.ReadAll(httpResp.Body)")
+	p("if err != nil {")
+	p(`  return fmt.Errorf("reading response body for %%q: %%s", reqURL, err)`)
+	p("}")
+	p("")
+	//	p("fmt.Printf(%q, respBody)", "response: %s")
+	p("resp = new(%s)", responseType)
+	p("if err = protojson.Unmarshal(respBody, resp); err != nil {")
+	p(`  return fmt.Errorf("reading response body for %%q: %%s", reqURL, err)`)
+	p("}")
+
 	p("")
 
 	g.imports[pbinfo.ImportSpec{Path: "net/http"}] = true
-
-	// TODO(vchudnov) parse response body
+	g.imports[pbinfo.ImportSpec{Path: "io/ioutil"}] = true
+	g.imports[pbinfo.ImportSpec{Path: "google.golang.org/protobuf/encoding/protojson"}] = true
 
 	return nil
 }
