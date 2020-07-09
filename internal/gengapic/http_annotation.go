@@ -25,7 +25,7 @@ import (
 	"google.golang.org/genproto/googleapis/api/annotations"
 )
 
-func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []string, method string, err error) {
+func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []string, method string, body string, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("http annotation: %s", err)
@@ -34,9 +34,9 @@ func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []strin
 
 	eHTTP, err := proto.GetExtension(m.GetOptions(), annotations.E_Http)
 	if m == nil || m.GetOptions() == nil || err == proto.ErrMissingExtension {
-		return nil, "", nil
+		return nil, "", "", nil
 	} else if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	http := eHTTP.(*annotations.HttpRule)
@@ -47,10 +47,21 @@ func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []strin
 	for _, rule := range rules {
 		pattern := ""
 
+		// Check as per AIP 127
+		newBody := rule.GetBody()
+		if len(body) > 0 && newBody != body {
+			err = fmt.Errorf("inconsistent body annotations %q and %q", body, newBody)
+		}
+		body = newBody
+
 		switch rule.GetPattern().(type) {
 		case *annotations.HttpRule_Get:
 			pattern = rule.GetGet()
 			method = "GET"
+			// Check as per AIP 127
+			if len(body) > 0 {
+				err = fmt.Errorf("unexpected body definition for GET method: %q", body)
+			}
 		case *annotations.HttpRule_Post:
 			pattern = rule.GetPost()
 			method = "POST"
@@ -63,17 +74,25 @@ func getHTTPAnnotation(m *descriptor.MethodDescriptorProto) (allPatterns []strin
 		case *annotations.HttpRule_Delete:
 			pattern = rule.GetDelete()
 			method = "DELETE"
+			// Check as per AIP 127
+			if len(body) > 0 {
+				err = fmt.Errorf("unexpected body definition for DELETE method: %q", body)
+			}
 		default:
-			return nil, "", fmt.Errorf("unhandled http method %#v", rule)
+			err = fmt.Errorf("unhandled http method %#v", rule)
 		}
+		if err != nil {
+			return nil, "", "", err
+		}
+
 		allPatterns = append(allPatterns, pattern)
 	}
-	return allPatterns, method, nil
+	return allPatterns, method, body, nil
 }
 
 var pathVariableRegexp = regexp.MustCompile("{([^}]+)}")
 
-func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (method string, err error) {
+func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto, pathVariable, bodyVariable string) (method string, haveBody bool, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("generating REST request code: %s", err)
@@ -82,9 +101,9 @@ func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (method 
 
 	p := pt.Printf
 
-	allPatterns, method, err := getHTTPAnnotation(m)
+	allPatterns, method, body, err := getHTTPAnnotation(m)
 	if err != nil || len(allPatterns) == 0 {
-		return "", err
+		return "", false, err
 	}
 
 	for _, onePattern := range allPatterns {
@@ -92,15 +111,35 @@ func restifyRequest(pt *printer.P, m *descriptor.MethodDescriptorProto) (method 
 	}
 
 	pattern := allPatterns[0]
-	err = restifyRequestPath(pt, m, pattern)
+	err = restifyRequestPath(pt, m, pathVariable, pattern)
+	haveBody, err = restifyRequestBody(pt, m, bodyVariable, body)
+	if err != nil {
+		return "", false, err
+	}
 
 	// TODO(vchudnov): restifyRequestQueryParams
-	// TODO(vchudnov): restifyRequestBody
 
-	return method, err
+	return method, haveBody, err
 }
 
-func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, pattern string) (err error) {
+func restifyRequestBody(pt *printer.P, m *descriptor.MethodDescriptorProto, bodyVariable string, body string) (haveBody bool, err error) {
+	if len(body) == 0 {
+		return false, nil
+	}
+
+	var restBody string
+	if body == "*" {
+		restBody = "req"
+	} else {
+		// TODO(vchudnov): Check the accessor below is valid.
+		restBody = "req" + buildAccessor(body)
+	}
+	pt.Printf("  %s := %s", bodyVariable, restBody)
+	return true, nil
+
+}
+
+func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, pathVariable string, pattern string) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("in pattern %q: %s", pattern, err)
@@ -110,7 +149,6 @@ func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, patt
 	p := pt.Printf
 
 	maxPatternIndex := len(pattern) - 1
-
 	variableMatches := pathVariableRegexp.FindAllStringSubmatchIndex(pattern, -1) // {([^{}]+)}
 
 	currentIdx := 0
@@ -127,7 +165,7 @@ func restifyRequestPath(pt *printer.P, m *descriptor.MethodDescriptorProto, patt
 	if currentIdx < maxPatternIndex {
 		parts = append(parts, fmt.Sprintf("%q", pattern[currentIdx:]))
 	}
-	p("  urlPath := fmt.Sprint(%s)", strings.Join(parts, ", "))
+	p("  %s := fmt.Sprint(%s)", pathVariable, strings.Join(parts, ", "))
 
 	return nil
 }
@@ -150,10 +188,17 @@ func getVariableFor(variable string, m *descriptor.MethodDescriptorProto) (acces
 		valuePattern = variableParts[1]
 	}
 
-	// TODO(vchudnov) Implement resource name pattern
-	// checking. Generate a function that keeps a map of all
-	// regexes indexed by variableParts, and then matches the
-	// field value against that.
+	// TODO(vchudnov): Return a URL path fragment corresponding to
+	// `valuePattern`. Right now we are not checking
+	// `valuePattern`, but according to
+	// https://google.aip.dev/127, this MUST be
+	// specified. Currently, the Discovery-to-proto converter does
+	// not provide a `valuePattern`, and this works fine with the PHP
+	// HTTP transport in the monolith.
+	//
+	// TODO(vchudnov): As part of the above, check that we extract
+	// the full resource name when appropriate (can we tell when
+	// it's appropriate?). cf https://google.aip.dev/127
 	if len(valuePattern) > 0 {
 		return "", fmt.Errorf("resource name pattern checking not implemented yet: %q", valuePattern)
 	}
@@ -161,5 +206,7 @@ func getVariableFor(variable string, m *descriptor.MethodDescriptorProto) (acces
 	if len(fieldName) == 0 {
 		return "", fmt.Errorf("no field name provided")
 	}
+
+	// TODO(vchudnov): Check the accessor below is valid.
 	return "req" + buildAccessor(fieldName), nil
 }

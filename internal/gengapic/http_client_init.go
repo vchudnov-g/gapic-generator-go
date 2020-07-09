@@ -185,41 +185,84 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, respo
 		}
 	}()
 
+	// TODO(vchudnov): Remove references to this variable. This is
+	// here merely to aid debugging during development.
+	debugRequest := false
+
 	g := hcg.g
 	p := g.printf
 
-	method, err := restifyRequest(pt, m)
+	pathVariable := "restPath"
+	bodyVariable := "restBody"
+
+	method, haveBody, err := restifyRequest(pt, m, pathVariable, bodyVariable)
 	if err != nil {
 		return err
 	}
 
+	bodyBytes := "nil"
+	bodyDebug := `""`
+	if haveBody {
+		p("")
+		p("httpBody, err := protojson.Marshal(%s)", bodyVariable)
+		p("if err != nil {")
+		p("  return err")
+		p("}")
+		bodyBytes = "bytes.NewReader(httpBody)"
+		g.imports[pbinfo.ImportSpec{Path: "bytes"}] = true
+		bodyDebug = "string(httpBody)"
+
+	}
+
 	p("")
-	p(`reqURL := fmt.Sprintf("https://%s%%s", urlPath)`, hcg.host)
-	p("httpReq, err := http.NewRequestWithContext(ctx, %q, reqURL, nil)", method)
+	p(`httpURL := fmt.Sprintf("https://%s%%s", %s)`, hcg.host, pathVariable)
+	p("httpReq, err := http.NewRequestWithContext(ctx, %q, httpURL, %s)", method, bodyBytes)
 	p("if err != nil {")
-	p(`  return fmt.Errorf("creating http request %%q: %%s", reqURL, err)`)
+	p(`  return fmt.Errorf("creating http request %%q: %%s", httpURL, err)`)
 	p("}")
 	p("")
 	p("accessToken, err := getHTTPAccessToken()")
 	p("if err != nil {")
-	p(`  return fmt.Errorf("getting access token for http request %%q: %%s", reqURL, err)`)
+	p(`  return fmt.Errorf("getting access token for http request %%q: %%s", httpURL, err)`)
 	p("}")
 	p(`httpReq.Header.Add("Authorization", "Bearer "+accessToken)`)
 	p("")
+
+	if debugRequest {
+		p("// START debugging code")
+		p("headers := []string{}")
+		p("for key, value := range httpReq.Header {")
+		p(`  headers = append(headers, fmt.Sprintf("%%s: %%s", key, value[0]))`)
+		p("}")
+		p(`curlHeader := ""`)
+		p("if len(headers) > 0 {")
+		p(`  curlHeader = fmt.Sprintf("-H '%%s'", strings.Join(headers, "' -H '"))`)
+		p("}")
+		p(`fmt.Printf("**%s:\ncurl -X %s %%s -d '%%s' %%s\n\n", httpURL, %s, curlHeader)`, *m.Name, method, bodyDebug)
+		p("// END debugging code")
+		p("")
+	}
+
 	p("httpResp, err := c.client.Do(httpReq)")
 	p("if err != nil {")
-	p(`  return fmt.Errorf("issuing http request %%q: %%s", reqURL, err)`)
+	p(`  return fmt.Errorf("issuing http request %%q: %%s", httpURL, err)`)
 	p("}")
 	p("")
 	p("respBody, err := ioutil.ReadAll(httpResp.Body)")
 	p("if err != nil {")
-	p(`  return fmt.Errorf("reading response body for %%q: %%s", reqURL, err)`)
+	p(`  return fmt.Errorf("reading response body for %%q: %%s", httpURL, err)`)
 	p("}")
 	p("")
 	//	p("fmt.Printf(%q, respBody)", "response: %s")
 	p("resp = new(%s)", responseType)
 	p("if err = protojson.Unmarshal(respBody, resp); err != nil {")
-	p(`  return fmt.Errorf("reading response body for %%q: %%s", reqURL, err)`)
+	if debugRequest {
+		p(`  bodyJson, _ := json.MarshalIndent(respBody, "", "  ")`)
+		p(`  return fmt.Errorf("reading response body for %%q: %%s\n%%s\n", httpURL, err, bodyJson)`)
+	} else {
+		p(`  return fmt.Errorf("reading response body for %%q: %%s\n", httpURL, err)`)
+	}
+	p("")
 	p("}")
 
 	p("")
@@ -227,7 +270,10 @@ func (hcg *httpClientGenerator) clientCall(pt *printer.P, servName string, respo
 	g.imports[pbinfo.ImportSpec{Path: "net/http"}] = true
 	g.imports[pbinfo.ImportSpec{Path: "io/ioutil"}] = true
 	g.imports[pbinfo.ImportSpec{Path: "google.golang.org/protobuf/encoding/protojson"}] = true
-
+	if debugRequest {
+		g.imports[pbinfo.ImportSpec{Path: "strings"}] = true
+		g.imports[pbinfo.ImportSpec{Path: "encoding/json"}] = true
+	}
 	return nil
 }
 

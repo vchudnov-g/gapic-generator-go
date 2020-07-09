@@ -688,7 +688,7 @@ func snakeToCamel(s string) string {
 func parseRequestHeaders(m *descriptor.MethodDescriptorProto) ([][]string, error) {
 	var matches [][]string
 
-	allPatterns, _, err := getHTTPAnnotation(m)
+	allPatterns, _, _, err := getHTTPAnnotation(m)
 	if err != nil || len(allPatterns) == 0 {
 		return nil, err
 	}
